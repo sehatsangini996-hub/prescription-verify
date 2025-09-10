@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QR Verify • Sehat Sangini</title>
+  <style>
+    :root{
+      --bg:#0f172a; --card:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --danger:#ef4444;
+      --border:#1f2937;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:400 16px/1.5 system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:920px;margin:24px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 16px}
+    h1{font-size:22px;margin:0 0 12px}
+    h2{font-size:18px;margin:18px 0 10px}
+    .kv{display:grid;grid-template-columns:160px 1fr;gap:8px 12px;margin:10px 0}
+    .k{color:var(--muted)}
+    .ok{color:var(--accent);font-weight:600}
+    .bad{color:var(--danger);font-weight:600}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{appearance:none;border:1px solid var(--border);background:#0b1220;color:var(--text);
+         padding:10px 14px;border-radius:10px;cursor:pointer}
+    .btn:hover{border-color:#334155}
+    .muted{color:var(--muted)}
+    .small{font-size:13px}
+    .note{margin-top:10px}
+    .divider{height:1px;background:var(--border);margin:16px 0}
+    .hide{display:none}
+    code{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>QR Verification</h1>
+      <div id="statusLine" class="muted small">Waiting for data…</div>
+
+      <div class="kv" id="kvBasic">
+        <div class="k">Appointment ID</div><div id="vAppt">—</div>
+        <div class="k">Doctor ID</div><div id="vDoc">—</div>
+        <div class="k">Patient Name</div><div id="vPatient">—</div>
+        <div class="k">Timestamp</div><div id="vTs">—</div>
+      </div>
+
+      <div class="row">
+        <button class="btn" id="btnCopy">Copy verification link</button>
+        <a class="btn" id="btnWhatsApp" target="_blank" rel="noopener">Share on WhatsApp</a>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Firestore (optional) -->
+      <div id="fsBlock" class="hide">
+        <h2>Live status (from clinic)</h2>
+        <div class="kv">
+          <div class="k">Status</div><div id="fsStatus">—</div>
+          <div class="k">Patient</div><div id="fsPatient">—</div>
+          <div class="k">Phone</div><div id="fsPhone">—</div>
+          <div class="k">Age / Gender</div><div id="fsAgeGen">—</div>
+          <div class="k">Created</div><div id="fsCreated">—</div>
+        </div>
+        <div class="note small muted">
+          * यह जानकारी Firebase/Firestore से पढ़ी गई है (यदि सक्षम है)।
+        </div>
+      </div>
+
+      <div class="note small muted">
+        Tip: QR लिंक इस तरह रखें:
+        <code>/p/htmljs.html#verify&amp;appt=...&amp;doc=...&amp;patient=...&amp;ts=...</code>
+        (हम <code>pname</code> या <code>name</code> भी सपोर्ट करते हैं)
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --------- Helpers ----------
+    function decodeHtmlEntities(str) {
+      if (!str) return '';
+      const ta = document.createElement('textarea');
+      ta.innerHTML = str;          // &#x...;, &#...;, &amp; आदि को डिकोड करेगा
+      return ta.value;
+    }
+    function parseParams() {
+      const raw = (location.hash || '').replace(/^#/, '');
+      const rawQ = location.search.replace(/^\?/, '');
+      const pick = raw.includes('appt=') ? raw : rawQ;
+      const out = {};
+      for (const chunk of pick.split('&')) {
+        if (!chunk) continue;
+        const [k,v] = chunk.split('=');
+        if (!k) continue;
+        // URL-decode + HTML-entity decode
+        const val = decodeHtmlEntities(decodeURIComponent(v || ''));
+        out[decodeURIComponent(k)] = val;
+      }
+      return out;
+    }
+    function fmtTime(ts) {
+      const n = Number(ts);
+      return isFinite(n) && n > 0 ? new Date(n).toLocaleString() : '—';
+    }
+
+    // --------- Read params + fill UI ----------
+    const p   = parseParams();
+    const appt = p.appt || '';
+    const doc  = p.doc  || '';
+    const patient = p.patient || p.pname || p.name || '';  // any key works
+    const ts   = p.ts   || '';
+
+    document.getElementById('vAppt').textContent    = appt || '—';
+    document.getElementById('vDoc').textContent     = doc  || '—';
+    document.getElementById('vPatient').textContent = patient || '—';
+    document.getElementById('vTs').textContent      = fmtTime(ts);
+
+    const ok = (typeof p.verify !== 'undefined') && appt && doc;
+    const statusLine = document.getElementById('statusLine');
+    statusLine.innerHTML = ok
+      ? '<span class="ok">Prescription verified • प्रिस्क्रिप्शन सत्यापित हो गया</span>'
+      : '<span class="bad">Invalid / missing QR data • QR डेटा अधूरा या गलत है</span>';
+
+    // Copy / WhatsApp
+    const fullLink = location.href;
+    document.getElementById('btnCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(fullLink); alert('Link copied'); }
+      catch(e){ alert('Copy failed'); }
+    };
+    const waText = encodeURIComponent(
+      'Prescription verify link:\n' + fullLink
+      + (patient ? '\nPatient: ' + patient : '')
+    );
+    document.getElementById('btnWhatsApp').href = 'https://wa.me/?text=' + waText;
+
+    // --------- OPTIONAL Firestore live read ----------
+    const firebaseConfig = null; // चाहें तो अपनी Firebase config भरें
+
+    async function enableFirestoreVerify() {
+      if (!firebaseConfig || !ok) return;
+      await loadScript("https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js");
+      await loadScript("https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js");
+      // eslint-disable-next-line no-undef
+      const app = firebase.initializeApp(firebaseConfig);
+      // eslint-disable-next-line no-undef
+      const db  = firebase.firestore(app);
+
+      try {
+        const snap = await db.collection('appointments').doc(appt).get();
+        if (!snap.exists) {
+          document.getElementById('fsStatus').textContent = 'Not found';
+        } else {
+          const d = snap.data() || {};
+          document.getElementById('fsStatus').textContent  = d.status || '-';
+          document.getElementById('fsPatient').textContent = d.patientName || '-';
+          document.getElementById('fsPhone').textContent   = d.patientPhone || '-';
+          const age = (d.patientAge!=null) ? String(d.patientAge) : '';
+          const gen = d.patientGender || '';
+          document.getElementById('fsAgeGen').textContent =
+            [age ? ('Age ' + age) : '', gen ? ('Gender ' + gen) : '']
+            .filter(Boolean).join(' • ') || '-';
+          let created = '-';
+          if (d.createdAt && d.createdAt.toDate) created = d.createdAt.toDate().toLocaleString();
+          document.getElementById('fsCreated').textContent = created;
+        }
+        document.getElementById('fsBlock').classList.remove('hide');
+      } catch (err) {
+        console.warn('Firestore read failed', err);
+        document.getElementById('fsStatus').textContent = 'Error';
+        document.getElementById('fsBlock').classList.remove('hide');
+      }
+    }
+    function loadScript(src){
+      return new Promise((resolve,reject)=>{
+        const s=document.createElement('script');
+        s.src=src; s.onload=resolve; s.onerror=reject;
+        document.head.appendChild(s);
+      });
+    }
+    enableFirestoreVerify();
+  </script>
+</body>
+</html>
